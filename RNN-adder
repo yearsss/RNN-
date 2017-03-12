@@ -1,0 +1,110 @@
+import numpy as np
+import copy
+
+# 固定随机数种子
+np.random.seed(1)
+
+
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
+
+def sigmoid_delta(y):
+    return y * (1 - y)
+int2binary = {}
+a = np.unpackbits(np.array([[i] for i in range(256)], dtype='uint8'), axis=1)
+# print a
+for i, arr in enumerate(a):
+    int2binary[i] = arr
+
+alpha = 0.1
+input_dim = 2
+hidden_dim = 16
+output_dim = 1
+binary_dim = 8 # 时间步
+
+W_input2hidden = 2 * np.random.random((input_dim, hidden_dim)) - 1
+W_hidden2output = 2 * np.random.random((hidden_dim, output_dim)) - 1
+W_hidden2hidden = 2 * np.random.random((hidden_dim, hidden_dim)) - 1
+
+
+W_input2hidden_update = np.zeros_like(W_input2hidden)
+W_hidden2output_update = np.zeros_like(W_hidden2output)
+W_hidden2hidden_update = np.zeros_like(W_hidden2hidden)
+
+# training 100000, using SGD learning
+for j in range(1000000):
+    a_int = np.random.randint(256 / 2)
+    a = int2binary[a_int]
+    b_int = np.random.randint(256 / 2)
+    b = int2binary[b_int]
+    c_int = a_int + b_int
+    c = int2binary[c_int]
+    
+    d = np.zeros_like(c)
+    overall_error = 0
+    output_layer_deltas = [] # 存储每个时间点输出层的错误量 
+    hidden_layer_values = [np.zeros((1, hidden_dim))] # 存储每个时间点隐藏层的值
+    
+    # forward 
+    for position in range(binary_dim):
+        X = np.array([[a[binary_dim - position - 1], b[binary_dim - position - 1]]])
+        Y = np.array([[c[binary_dim - position - 1]]])
+    
+        hidden_layer = sigmoid(np.dot(X, W_input2hidden) + np.dot(hidden_layer_values[-1], W_hidden2hidden))
+        output_layer = sigmoid(np.dot(hidden_layer, W_hidden2output))
+        # print "output_layer: {}".format(output_layer)
+        output_error = output_layer - Y
+        output_layer_deltas.append(sigmoid_delta(output_layer) * output_error)
+        overall_error += np.abs(output_error[0])
+        
+        # decode output
+        d[binary_dim- position - 1] = np.round(output_layer[0][0])
+        
+        # store hidden_layer values for next time using
+        hidden_layer_values.append(copy.deepcopy(hidden_layer))
+        
+    post_hidden_layer_delta = np.zeros_like(hidden_layer)
+    
+
+        
+    # backward
+    for position in range(binary_dim):
+        X = np.array([[a[position], b[position]]])
+        hidden_layer = hidden_layer_values[-position - 1]
+        pre_hidden_layer = hidden_layer_values[-position - 2]
+        
+        output_layer_delta = output_layer_deltas[-position - 1]
+        hidden_layer_delta = (np.dot(post_hidden_layer_delta, W_hidden2hidden.T) \
+                                + np.dot(output_layer_delta, W_hidden2output.T)) * sigmoid_delta(hidden_layer)
+
+        # compute delta
+        # print hidden_layer_delta.T.shape
+        # print pre_hidden_layer.shape
+        W_hidden2hidden_update += np.dot(pre_hidden_layer.T, hidden_layer_delta)
+        W_hidden2output_update += np.dot(hidden_layer.T, output_layer_delta)
+        W_input2hidden_update += np.dot(X.T, hidden_layer_delta)
+        
+        post_hidden_layer_delta = hidden_layer_delta
+        
+        # update param
+    # print W_hidden2hidden_update
+    # assert 1 == 2
+    W_hidden2hidden -= alpha * W_hidden2hidden_update
+    W_hidden2output -= alpha * W_hidden2output_update
+    W_input2hidden -= alpha * W_input2hidden_update
+        
+    W_hidden2hidden_update *= 0.
+    W_hidden2output_update *= 0.
+    W_input2hidden_update *= 0.
+        
+    if j % 10000 == 0:
+        print "error: {}".format(overall_error)
+        print "output: {}".format(d)
+        print "true: {}".format(c)
+        out = 0
+        for i, x in enumerate(reversed(d)):
+            out += x * (2 ** i)
+        print "{} + {} = {}".format(a_int, b_int, out)
+        print "-----------------"
+        
+        
