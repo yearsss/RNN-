@@ -1,0 +1,163 @@
+import numpy as np
+import copy
+
+# 固定随机数种子
+np.random.seed(1)
+
+
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
+
+def sigmoid_delta(y):
+    return y * (1 - y)
+
+def tanh_delta(x):
+    return 1 - np.tanh(x) ** 2
+
+def tanh(x):
+    return np.tanh(x)
+
+
+int2binary = {}
+a = np.unpackbits(np.array([[i] for i in range(256)], dtype='uint8'), axis=1)
+# print a
+for i, arr in enumerate(a):
+    int2binary[i] = arr
+
+alpha = 0.1
+input_dim = 2
+hidden_dim = 60
+output_dim = 1
+binary_dim = 8 # 时间步
+batch = 1
+
+
+# 定义lstm网络参数,初始化(-1,1)
+W_hidden2output = 2 * np.random.random((hidden_dim, output_dim)) - 1
+
+W_forget_gate = 2 * np.random.random(((input_dim + hidden_dim), hidden_dim)) - 1
+W_input_gate = 2 * np.random.random(((input_dim + hidden_dim), hidden_dim)) - 1
+W_output_gate = 2 * np.random.random(((input_dim + hidden_dim), hidden_dim)) - 1
+W_cell = 2 * np.random.random(((input_dim + hidden_dim), hidden_dim)) - 1
+
+W_forget_gate_update = np.zeros_like(W_forget_gate)
+W_input_gate_update = np.zeros_like(W_input_gate)
+W_output_gate_update = np.zeros_like(W_output_gate)
+W_cell_update = np.zeros_like(W_cell)
+
+# training 100000, using SGD learning, mini batch = 1
+for j in range(10000000):
+    a_int = np.random.randint(256 / 2)
+    a = int2binary[a_int]
+    b_int = np.random.randint(256 / 2)
+    b = int2binary[b_int]
+    c_int = a_int + b_int
+    c = int2binary[c_int]
+    
+    d = np.zeros_like(c)
+    overall_error = 0
+    
+    hidden_layer_values = [np.zeros((batch, hidden_dim))] # 存储每个时间点隐藏层的值
+    cell_values = [np.zeros((batch, hidden_dim))] # 存储每个时间点记忆单元的值
+    input_gate_values = [] # 存储每个时间点输入门的值
+    output_gate_values = [] # 存储每个时间点输出门的值
+    forgate_gate_values = [] # 存储每个时间点遗忘门的值
+    _cell_values = [] # 存储每个时间点将要写入记忆单元的值
+    output_layer_values = [] # 存储每个时间点输出层的值
+    
+    
+    # forward 
+    for position in range(binary_dim):
+        X = np.array([[a[binary_dim - position - 1], b[binary_dim - position - 1]]])
+        Y = np.array([[c[binary_dim - position - 1]]])
+        #print hidden_layer_values[-1].shape
+        #print X.shape
+        forgate_gate = sigmoid(np.concatenate((hidden_layer_values[-1], X), axis=1).dot(W_forget_gate))
+        #print "forgate_gate: {}".format(forgate_gate.shape)
+        input_gate = sigmoid(np.concatenate((hidden_layer_values[-1], X), axis=1).dot(W_input_gate))
+        #print "input_gate: {}".format(input_gate.shape)
+        output_gate = sigmoid(np.concatenate((hidden_layer_values[-1], X), axis=1).dot(W_output_gate))
+        #print "output_gate: {}".format(output_gate.shape)
+        _cell = input_gate * np.tanh(np.concatenate((hidden_layer_values[-1], X), axis=1).dot(W_cell))
+        #print "_cell: {}".format(_cell.shape)
+        cell = cell_values[-1] * forgate_gate + _cell * input_gate
+        #print "cell: {}".format(cell.shape)
+        hidden_layer = np.tanh(cell) * output_gate
+        
+        output_layer = sigmoid(hidden_layer.dot(W_hidden2output))
+        
+        # decode output
+        d[binary_dim- position - 1] = np.round(output_layer[0][0])
+        
+        # store hidden_layer values for next time using and comput gradient
+        hidden_layer_values.append(copy.deepcopy(hidden_layer))
+        input_gate_values.append(copy.deepcopy(input_gate))
+        forgate_gate_values.append(copy.deepcopy(forgate_gate))
+        output_gate_values.append(copy.deepcopy(output_gate))
+        cell_values.append(copy.deepcopy(cell))
+        _cell_values.append(copy.deepcopy(_cell))
+        output_layer_values.append(copy.deepcopy(output_layer))
+        
+    post_hidden_layer_delta = np.zeros(hidden_dim)
+    post_cell_delta = np.zeros(hidden_dim)
+    
+    # backward
+    for position in range(binary_dim):
+        X = np.array([[a[position], b[position]]])
+        Y = np.array([[c[position]]])
+        
+        output_layer = output_layer_values[-1 - position]
+        forgate_gate = forgate_gate_values[-1 - position]
+        output_gate = output_gate_values[-1 - position]
+        input_gate = input_gate_values[-1 - position]
+        
+        hidden_layer = hidden_layer_values[-1 - position]
+        pre_hidden_layer = hidden_layer_values[-2a - position]
+        cell = cell_values[-1 - position]
+        pre_cell = cell_values[-2 - position]
+        _cell = _cell_values[-1 - position]
+        
+        overall_error += abs(output_layer - Y)
+        
+        output_layer_delta = sigmoid_delta(output_layer) * (output_layer - Y)
+        # print "output_layer_deltas: {}".format(output_layer_delta)
+        
+        hidden_layer_delta = output_layer_delta.dot(W_hidden2output.T) + post_hidden_layer_delta
+        # print "hidden_layer_delta: {}".format(hidden_layer_delta.shape)
+        cell_delta = hidden_layer_delta * output_gate * tanh_delta(cell) + post_cell_delta
+        output_gate_delta = hidden_layer_delta * tanh(cell) * sigmoid_delta(output_gate)
+        input_gate_delta = cell_delta * _cell * sigmoid_delta(input_gate)
+        forgate_gate_delta = cell_delta * pre_cell * sigmoid_delta(forgate_gate)
+        _cell_delta = cell_delta * input_gate * tanh_delta(_cell)
+        
+        # compute param delta
+        # print forgate_gate_delta.shape
+        W_forget_gate_update += np.concatenate((pre_hidden_layer, X), axis=1).T.dot(forgate_gate_delta)
+        W_input_gate_update += np.concatenate((pre_hidden_layer, X), axis=1).T.dot(input_gate_delta)
+        W_output_gate_update += np.concatenate((pre_hidden_layer, X), axis=1).T.dot(output_gate_delta)
+        W_cell_update += np.concatenate((pre_hidden_layer, X), axis=1).T.dot(_cell_delta)
+        
+        post_hidden_layer_delta = hidden_layer_delta
+        post_cell_delta = cell_delta
+    
+    # assert 1 == 2
+    # update param
+    W_forget_gate -= alpha * W_forget_gate_update
+    W_input_gate -= alpha * W_forget_gate_update
+    W_output_gate -= alpha * W_output_gate_update
+    W_cell_update -= alpha * W_cell_update
+        
+    W_forget_gate_update *= 0.
+    W_forget_gate_update *= 0.
+    W_output_gate_update *= 0.
+    W_cell_update *= 0.
+        
+    if j % 10000 == 0:
+        print "error: {}".format(overall_error)
+        print "output: {}".format(d)
+        print "true: {}".format(c)
+        out = 0
+        for i, x in enumerate(reversed(d)):
+            out += x * (2 ** i)
+        print "{} + {} = {}".format(a_int, b_int, out)
+        print "-----------------"
